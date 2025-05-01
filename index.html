@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DevEvents attended by Esri Engineering team members</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.29/"></script>
+  <script type="module" src="https://js.arcgis.com/calcite-components/3.1.0/calcite.esm.js"></script>
+  
+  <style>
+    html, body, #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
+    
+    #cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding: 1rem;
+      justify-content: space-evenly; /* or use space-between/center/start */
+    }
+    
+    calcite-card {
+      flex: 1 1 250px; /* grow, shrink, min-width */
+      max-width: 400px;
+    }
+    
+    #example-slotted-footer {
+      flex-flow: row;
+    }
+    
+    #example-slotted-action {
+      margin-inline-start: 0.25rem;
+    }
+  </style>
+  
+</head>
+<body>
+  <calcite-shell>
+    <calcite-panel heading="DevEvents attended by Esri Engineering team members">
+      <div id="viewDiv"></div>
+    </calcite-panel>
+    <calcite-shell-panel slot="panel-bottom" layout="horizontal"  position="end" id="shell-panel-start">
+      <calcite-panel layout="horizontal">
+        
+        <calcite-card-group label="Events"  id="cards" selection-mode="single">
+          
+        </calcite-card-group>
+        
+      </calcite-panel>
+    </calcite-shell-panel>
+    
+  </calcite-shell>
+  
+  <script>
+    
+    
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/layers/Layer",
+      "esri/layers/GraphicsLayer",
+      "esri/Graphic",
+      "esri/symbols/CIMSymbol"
+    ], (Map, MapView, Layer, GraphicsLayer, Graphic, CIMSymbol) => {
+      
+      const map = new Map({
+        basemap: "dark-gray-vector"
+      });
+      // debugger
+      
+      
+      const view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [-20, 30],
+        zoom: 2,
+        constraints: {
+          minZoom: 2
+        }
+      });
+      window.view = view
+      
+      view.when(loaded =>{
+        map.basemap.referenceLayers.removeAll();
+      })
+      
+      const graphicsLayer = new GraphicsLayer({
+        minScale: 18489297,
+        
+      });
+      Layer.fromPortalItem({
+        portalItem: {
+          id: "bf6fccd45e084a2fae0053ad534ffd8f"
+        }
+      }).then(function(featureLayer){
+        
+        map.addMany([graphicsLayer, featureLayer]);
+        
+        function createCircleRing(centerX, centerY, radius, segments = 64) {
+          const ring = [];
+          for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * 2 * Math.PI;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            ring.push([x, y]);
+          }
+          return [ring];
+        }
+        
+        const circleRing = createCircleRing(20, 20, 14); // centro (20,20), radio 20
+        
+        // First, load all features and their attachments
+        featureLayer.queryFeatures({ 
+          where: "1=1", 
+          orderByFields: "start_date DESC",
+          returnGeometry: true, 
+          outFields: ["*"] 
+        }).then(results => {
+          console.log("results=",results)
+          const cardsEl = document.getElementById("cards");
+          let promises=[];
+          for (const feature of results.features) {
+            // Query attachments for each feature
+            const objectId = feature.attributes[featureLayer.objectIdField];
+            
+            
+            promises.push(featureLayer.queryAttachments({ objectIds: [objectId] }).then(attachments => {
+              
+              const attachmentInfo = attachments[objectId]?.[0];
+              if (!attachmentInfo) return; // If no logo -> skip
+              
+              const attachmentUrl = `${featureLayer.url}/${featureLayer.layerId}/${objectId}/attachments/${attachmentInfo.id}`;
+              
+              feature.attributes.attachmentUrl = attachmentUrl;
+              
+              // Create CIM symbol using the image URL
+              const cimSymbol = new CIMSymbol({
+                data: {
+                  type: "CIMSymbolReference",
+                  symbol: {
+                    type: "CIMPointSymbol",
+                    symbolLayers: [
+                    {
+                      type: "CIMPictureMarker",
+                      enable: true,
+                      scaleX: 1,
+                      scaleY: 1,
+                      size: 25,
+                      url: attachmentUrl,
+                      imageFormat: "PNG"
+                    },
+                    {
+                      type: "CIMVectorMarker",
+                      enable: true,
+                      size: 40,
+                      frame: { xmin: 0, ymin: 0, xmax: 40, ymax: 40 },
+                      markerGraphics: [{
+                        geometry: {
+                          rings: circleRing
+                        },
+                        symbol: {
+                          type: "CIMPolygonSymbol",
+                          symbolLayers: [{
+                            type: "CIMSolidFill",
+                            enable: true,
+                            color: [255, 255, 255, 255] // White background
+                          }]
+                        }
+                      }]
+                    }]
+                  }
+                }
+              });
+              
+              const graphic = new Graphic({
+                geometry: feature.geometry,
+                symbol: cimSymbol,
+                attributes: feature.attributes,
+                popupTemplate: {
+                  title: "{event_name}",
+                  content:[{
+                    type:"text",
+                    text: "Start date: {start_date} <br/> URL: <a href=\"{event_url}\">{event_url}</a>"
+                  },
+                  {
+                    type: "media",
+                    mediaInfos: [
+                    {
+                      type:"image",
+                      value: {
+                        sourceURL: feature.attributes.attachmentUrl
+                      }
+                    }] 
+                  }
+                  ]
+                }
+              });
+              graphicsLayer.add(graphic);
+              
+              const label = new Graphic({
+                geometry: feature.geometry,
+                symbol: {
+                  type: "text",
+                  text: feature.attributes.event_name,
+                  color: "white",
+                  haloColor: "black",
+                  haloSize: "1px",
+                  font: {
+                    size: 10,
+                    family: "Arial",
+                    weight: "bold"
+                  },
+                  yoffset: 20 // push label above marker
+                }
+              });
+              graphicsLayer.add(label);
+              
+              let template = document.createElement("calcite-card")
+              template.setAttribute("thumbnail-position", "inline-start");
+              template.setAttribute("start-date",feature.attributes.start_date);
+              template.setAttribute("latitude",feature.geometry.latitude);
+              template.setAttribute("longitude",feature.geometry.longitude);
+              template.innerHTML = `
+                  <img slot="thumbnail" src="${ feature.attributes.attachmentUrl}" alt="${feature.attributes.event_name} logo">
+                  <span slot="heading"><a href="${feature.attributes.event_url}">${feature.attributes.event_name}</a></span>
+                  <span slot="description">
+                    
+                    Start date: ${feature.attributes.start_date}
+                    </span>
+              `;
+              cardsEl.appendChild(template);              
+            }));
+            
+          }// end for
+
+          Promise.all(promises).then(() => {
+
+            cardsEl.addEventListener("calciteCardGroupSelect", (el, i) => {
+              const target = el.target.selectedItems[0];
+              const lat = target.getAttribute("latitude")
+              const lon = target.getAttribute("longitude")
+              view.goTo({
+                center: [Number(lon), Number(lat)],
+                zoom: 5
+              });
+            })
+            
+            const group = document.getElementById("cards");
+            
+            const cards = Array.from(group.querySelectorAll("calcite-card"));
+            
+            const sorted = cards.sort((a, b) => {
+              const dateA = new Date(a.getAttribute("start-date"));
+              const dateB = new Date(b.getAttribute("start-date"));
+              return dateB - dateA; // descending
+            });
+
+            // Clear the group and re-append sorted cards
+            sorted.forEach(card => group.appendChild(card));
+          });
+        });
+      });
+      
+    });
+  </script>
+</body>
+</body>
+</html>
