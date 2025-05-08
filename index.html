@@ -127,13 +127,19 @@
             // Query attachments for each feature
             const objectId = feature.attributes[featureLayer.objectIdField];
             
-            
+            window.fl = featureLayer;
             promises.push(featureLayer.queryAttachments({ objectIds: [objectId] }).then(attachments => {
               
               const attachmentInfo = attachments[objectId]?.[0];
-              if (!attachmentInfo) return; // If no logo -> skip
               
-              const attachmentUrl = `${featureLayer.url}/${featureLayer.layerId}/${objectId}/attachments/${attachmentInfo.id}`;
+              // if (!attachmentInfo){
+              //   // debugger
+              //   // console.log("objectId=",objectId);
+              //   // console.log("attachments=",attachments)
+              //   return; // If no logo -> skip
+              // } 
+              // console.log("attachmentInfo.id=",attachmentInfo.id)
+              const attachmentUrl = `${featureLayer.url}/${featureLayer.layerId}/${objectId}/attachments/${objectId}`;
               
               feature.attributes.attachmentUrl = attachmentUrl;
               
