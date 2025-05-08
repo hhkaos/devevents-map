@@ -150,7 +150,8 @@
                       scaleX: 1,
                       scaleY: 1,
                       size: 25,
-                      url: attachmentUrl,
+                      // url: attachmentUrl,
+                      url:"images/devconf-icon.png",
                       imageFormat: "PNG"
                     },
                     {
@@ -185,17 +186,18 @@
                   content:[{
                     type:"text",
                     text: "Start date: {start_date} <br/> URL: <a href=\"{event_url}\">{event_url}</a>"
-                  },
-                  {
-                    type: "media",
-                    mediaInfos: [
-                    {
-                      type:"image",
-                      value: {
-                        sourceURL: feature.attributes.attachmentUrl
-                      }
-                    }] 
                   }
+                  // ,{
+                  //   type: "media",
+                  //   mediaInfos: [
+                  //   {
+                  //     type:"image",
+                  //     value: {
+                  //       sourceURL: feature.attributes.attachmentUrl
+                  //     }
+                  //   }
+                  //] 
+                  //}
                   ]
                 }
               });
@@ -224,8 +226,9 @@
               template.setAttribute("start-date",feature.attributes.start_date);
               template.setAttribute("latitude",feature.geometry.latitude);
               template.setAttribute("longitude",feature.geometry.longitude);
+              // <img slot="thumbnail" src="${ feature.attributes.attachmentUrl}" alt="${feature.attributes.event_name} logo">
               template.innerHTML = `
-                  <img slot="thumbnail" src="${ feature.attributes.attachmentUrl}" alt="${feature.attributes.event_name} logo">
+                  
                   <span slot="heading"><a href="${feature.attributes.event_url}">${feature.attributes.event_name}</a></span>
                   <span slot="description">
                     
