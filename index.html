@@ -8,24 +8,124 @@
   <script type="module" src="https://js.arcgis.com/calcite-components/3.1.0/calcite.esm.js"></script>
   
   <style>
-    html, body, #viewDiv {
+    html, body {
       padding: 0;
       margin: 0;
       height: 100%;
       width: 100%;
     }
+
+    calcite-shell,
+    #map-panel {
+      height: 100%;
+      width: 100%;
+    }
+
+    #map-panel {
+      position: relative;
+      height: 100%;
+    }
+
+    #viewDiv {
+      height: 100%;
+      width: 100%;
+    }
+
+    #events-panel {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      bottom: 1rem;
+      width: min(360px, calc(100vw - 2rem));
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    #events-panel calcite-panel {
+      height: 100%;
+      pointer-events: auto;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    #events-panel-content {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+    }
+
+    #time-filter {
+      padding: 0.5rem 0.5rem 0;
+      border-bottom: 1px solid var(--calcite-color-border-3);
+      background: var(--calcite-color-foreground-1);
+    }
+
+    #event-filters {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 0.25rem 0.5rem 0.75rem;
+    }
+
+    .filter-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    #time-slider {
+      width: 100%;
+    }
     
     #cards {
       display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
+      flex-direction: column;
+      flex-wrap: nowrap;
+      gap: 0.75rem;
       padding: 1rem;
-      justify-content: space-evenly; /* or use space-between/center/start */
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      box-sizing: border-box;
+      align-items: stretch;
     }
     
     calcite-card {
-      flex: 1 1 250px; /* grow, shrink, min-width */
-      max-width: 400px;
+      width: 100%;
+      max-width: none;
+      cursor: pointer;
+      transition: opacity 160ms ease, filter 160ms ease;
+    }
+
+    #cards img[slot="thumbnail"] {
+      width: 80px;
+      height: 80px;
+      object-fit: contain;
+    }
+
+    calcite-card.is-out-of-range {
+      opacity: 0.45;
+      filter: grayscale(1);
+    }
+
+    calcite-card.is-hidden {
+      display: none;
+    }
+
+    .card-date {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      color: var(--calcite-color-text-2);
+    }
+
+    .card-date calcite-icon {
+      inline-size: 1rem;
+      block-size: 1rem;
+      color: var(--calcite-color-text-2);
     }
     
     #example-slotted-footer {
@@ -35,29 +135,53 @@
     #example-slotted-action {
       margin-inline-start: 0.25rem;
     }
+
+    @media (max-width: 720px) {
+      #events-panel {
+        top: auto;
+        left: 1rem;
+        right: 1rem;
+        bottom: 1rem;
+        width: auto;
+        max-height: 45vh;
+      }
+    }
   </style>
   
 </head>
 <body>
   <calcite-shell>
-    <calcite-panel heading="DevEvents attended by Esri Engineering team members">
+    <calcite-panel id="map-panel">
       <div id="viewDiv"></div>
+      <div id="events-panel">
+        <calcite-panel heading="Developer Events" description="Attended by Esri Engineering team members">
+          <div id="events-panel-content">
+            <div id="time-filter">
+              <calcite-block heading="Filters" collapsible>
+                <div id="event-filters">
+                  <calcite-label layout="inline-space-between" class="filter-toggle">
+                    <span>Hide Esri events</span>
+                    <calcite-switch id="hide-esri-toggle"></calcite-switch>
+                  </calcite-label>
+                  <calcite-slider
+                    id="time-slider"
+                    min-label="Start date"
+                    max-label="End date"
+                    label-handles
+                  ></calcite-slider>
+                </div>
+              </calcite-block>
+            </div>
+            <calcite-card-group label="Events" id="cards">
+              
+            </calcite-card-group>
+          </div>
+        </calcite-panel>
+      </div>
     </calcite-panel>
-    <calcite-shell-panel slot="panel-bottom" layout="horizontal"  position="end" id="shell-panel-start">
-      <calcite-panel layout="horizontal">
-        
-        <calcite-card-group label="Events"  id="cards" selection-mode="single">
-          
-        </calcite-card-group>
-        
-      </calcite-panel>
-    </calcite-shell-panel>
-    
   </calcite-shell>
   
   <script>
-    
-    
     require([
       "esri/Map",
       "esri/views/MapView",
@@ -66,7 +190,36 @@
       "esri/Graphic",
       "esri/symbols/CIMSymbol"
     ], (Map, MapView, Layer, GraphicsLayer, Graphic, CIMSymbol) => {
-      
+      const FEATURE_FLAGS = {
+        showEventImages: new URLSearchParams(window.location.search).get("images") === "1"
+      };
+      const DEFAULT_MARKER_ICON = "images/devconf-icon.png";
+      const DAY_IN_MS = 24 * 60 * 60 * 1000;
+      const MARKER_IMAGE_SIZE = 25;
+      const MARKER_CONTAINER_SIZE = 40;
+      const MARKER_IMAGE_RENDER_SIZE = 96;
+      const LABEL_FONT_SIZE = 10;
+      const LABEL_LINE_HEIGHT = 16;
+      const LABEL_VERTICAL_OFFSET = 20;
+      const LABEL_HORIZONTAL_PADDING = 12;
+      const LABEL_COLLISION_PADDING = 6;
+      const ACTIVE_PICTURE_TINT = [255, 255, 255, 255];
+      const INACTIVE_PICTURE_TINT = [170, 170, 170, 135];
+      const ACTIVE_MARKER_BACKGROUND = [255, 255, 255, 255];
+      const INACTIVE_MARKER_BACKGROUND = [190, 190, 190, 110];
+      const ACTIVE_LABEL_COLOR = [255, 255, 255, 255];
+      const INACTIVE_LABEL_COLOR = [180, 180, 180, 120];
+      const ACTIVE_LABEL_HALO = [0, 0, 0, 255];
+      const INACTIVE_LABEL_HALO = [0, 0, 0, 80];
+      const dateFormatter = new Intl.DateTimeFormat("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric"
+      });
+      const hideEsriToggle = document.getElementById("hide-esri-toggle");
+      const timeSlider = document.getElementById("time-slider");
+      const roundedMarkerIconCache = new globalThis.Map();
+
       const map = new Map({
         basemap: "dark-gray-vector"
       });
@@ -82,6 +235,7 @@
           minZoom: 2
         }
       });
+      view.popup.autoOpenEnabled = false;
       window.view = view
       
       view.when(loaded =>{
@@ -92,6 +246,229 @@
         minScale: 18489297,
         
       });
+
+      function normalizeToDayTimestamp(value) {
+        const parsed = new Date(value);
+
+        if (Number.isNaN(parsed.getTime())) {
+          return null;
+        }
+
+        parsed.setHours(0, 0, 0, 0);
+        return parsed.getTime();
+      }
+
+      function getStartOfToday() {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        return today.getTime();
+      }
+
+      function formatDateLabel(value) {
+        return dateFormatter.format(new Date(Number(value)));
+      }
+
+      function loadImage(url) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.crossOrigin = "anonymous";
+          image.onload = () => resolve(image);
+          image.onerror = reject;
+          image.src = url;
+        });
+      }
+
+      function getRoundedMarkerIconUrl(url) {
+        if (!url) {
+          return Promise.resolve(url);
+        }
+
+        if (!roundedMarkerIconCache.has(url)) {
+          const iconPromise = loadImage(url)
+            .then(image => {
+              const canvas = document.createElement("canvas");
+              const context = canvas.getContext("2d");
+
+              if (!context) {
+                return url;
+              }
+
+              canvas.width = MARKER_IMAGE_RENDER_SIZE;
+              canvas.height = MARKER_IMAGE_RENDER_SIZE;
+
+              const scale = Math.min(
+                canvas.width / image.width,
+                canvas.height / image.height
+              );
+              const drawWidth = image.width * scale;
+              const drawHeight = image.height * scale;
+              const offsetX = (canvas.width - drawWidth) / 2;
+              const offsetY = (canvas.height - drawHeight) / 2;
+
+              context.clearRect(0, 0, canvas.width, canvas.height);
+              context.beginPath();
+              context.arc(
+                canvas.width / 2,
+                canvas.height / 2,
+                canvas.width / 2,
+                0,
+                Math.PI * 2
+              );
+              context.closePath();
+              context.clip();
+              context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+
+              return canvas.toDataURL("image/png");
+            })
+            .catch(() => url);
+
+          roundedMarkerIconCache.set(url, iconPromise);
+        }
+
+        return roundedMarkerIconCache.get(url);
+      }
+
+      function createMarkerSymbol(iconUrl, isActive, circleRing) {
+        return new CIMSymbol({
+          data: {
+            type: "CIMSymbolReference",
+            symbol: {
+              type: "CIMPointSymbol",
+              symbolLayers: [
+                {
+                  type: "CIMPictureMarker",
+                  enable: true,
+                  scaleX: 1,
+                  scaleY: 1,
+                  size: MARKER_IMAGE_SIZE,
+                  url: iconUrl,
+                  imageFormat: "PNG",
+                  tintColor: isActive ? ACTIVE_PICTURE_TINT : INACTIVE_PICTURE_TINT
+                },
+                {
+                  type: "CIMVectorMarker",
+                  enable: true,
+                  size: MARKER_CONTAINER_SIZE,
+                  frame: { xmin: 0, ymin: 0, xmax: MARKER_CONTAINER_SIZE, ymax: MARKER_CONTAINER_SIZE },
+                  markerGraphics: [{
+                    geometry: {
+                      rings: circleRing
+                    },
+                    symbol: {
+                      type: "CIMPolygonSymbol",
+                      symbolLayers: [{
+                        type: "CIMSolidFill",
+                        enable: true,
+                        color: isActive ? ACTIVE_MARKER_BACKGROUND : INACTIVE_MARKER_BACKGROUND
+                      }]
+                    }
+                  }]
+                }
+              ]
+            }
+          }
+        });
+      }
+
+      function createLabelSymbol(text, isActive) {
+        return {
+          type: "text",
+          text,
+          color: isActive ? ACTIVE_LABEL_COLOR : INACTIVE_LABEL_COLOR,
+          haloColor: isActive ? ACTIVE_LABEL_HALO : INACTIVE_LABEL_HALO,
+          haloSize: "1px",
+          font: {
+            size: LABEL_FONT_SIZE,
+            family: "Arial",
+            weight: "bold"
+          },
+          yoffset: LABEL_VERTICAL_OFFSET
+        };
+      }
+
+      function getLabelBounds(entry) {
+        const screenPoint = view.toScreen(entry.label.geometry);
+
+        if (!screenPoint) {
+          return null;
+        }
+
+        const estimatedWidth = (entry.eventName.length * (LABEL_FONT_SIZE * 0.72)) + LABEL_HORIZONTAL_PADDING;
+        const estimatedHeight = LABEL_LINE_HEIGHT;
+        const minX = screenPoint.x - (estimatedWidth / 2) - LABEL_COLLISION_PADDING;
+        const maxX = screenPoint.x + (estimatedWidth / 2) + LABEL_COLLISION_PADDING;
+        const maxY = screenPoint.y - LABEL_VERTICAL_OFFSET + LABEL_COLLISION_PADDING;
+        const minY = maxY - estimatedHeight - (LABEL_COLLISION_PADDING * 2);
+
+        return { minX, maxX, minY, maxY };
+      }
+
+      function boundsOverlap(a, b) {
+        return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
+      }
+
+      function updateLabelVisibility(entries) {
+        const occupiedBounds = [];
+        const prioritizedEntries = [...entries].sort((a, b) => {
+          if (a.isHidden !== b.isHidden) {
+            return a.isHidden ? 1 : -1;
+          }
+
+          if (a.isActive !== b.isActive) {
+            return a.isActive ? -1 : 1;
+          }
+
+          return (b.startTimestamp ?? -Infinity) - (a.startTimestamp ?? -Infinity);
+        });
+
+        for (const entry of prioritizedEntries) {
+          if (entry.isHidden || !entry.isActive) {
+            entry.label.visible = false;
+            continue;
+          }
+
+          const bounds = getLabelBounds(entry);
+
+          if (!bounds) {
+            entry.label.visible = false;
+            continue;
+          }
+
+          const collides = occupiedBounds.some(existingBounds => boundsOverlap(existingBounds, bounds));
+          entry.label.visible = !collides;
+
+          if (!collides) {
+            occupiedBounds.push(bounds);
+          }
+        }
+      }
+
+      let scheduledLabelVisibilityUpdate = null;
+
+      function requestLabelVisibilityUpdate(entries) {
+        if (scheduledLabelVisibilityUpdate !== null) {
+          cancelAnimationFrame(scheduledLabelVisibilityUpdate);
+        }
+
+        scheduledLabelVisibilityUpdate = requestAnimationFrame(() => {
+          scheduledLabelVisibilityUpdate = null;
+          updateLabelVisibility(entries);
+        });
+      }
+
+      view.on("click", event => {
+        view.hitTest(event, { include: [graphicsLayer] }).then(response => {
+          const clickedGraphic = response.results.find(result => result.graphic?.attributes?.event_url)?.graphic;
+          const eventUrl = clickedGraphic?.attributes?.event_url;
+
+          if (!eventUrl) {
+            return;
+          }
+
+          window.open(eventUrl, "_blank", "noopener");
+        });
+      });
+
       Layer.fromPortalItem({
         portalItem: {
           id: "bf6fccd45e084a2fae0053ad534ffd8f"
@@ -113,7 +490,7 @@
         
         const circleRing = createCircleRing(20, 20, 14); // centro (20,20), radio 20
         
-        // First, load all features and their attachments
+        // Load all features, and fetch attachments only when the flag enables images.
         featureLayer.queryFeatures({ 
           where: "1=1", 
           orderByFields: "start_date DESC",
@@ -122,160 +499,184 @@
         }).then(results => {
           console.log("results=",results)
           const cardsEl = document.getElementById("cards");
+          const eventEntries = [];
           let promises=[];
           for (const feature of results.features) {
-            // Query attachments for each feature
             const objectId = feature.attributes[featureLayer.objectIdField];
-            
-            window.fl = featureLayer;
-            promises.push(featureLayer.queryAttachments({ objectIds: [objectId] }).then(attachments => {
-              
-              const attachmentInfo = attachments[objectId]?.[0];
-              
-              // if (!attachmentInfo){
-              //   // debugger
-              //   // console.log("objectId=",objectId);
-              //   // console.log("attachments=",attachments)
-              //   return; // If no logo -> skip
-              // } 
-              // console.log("attachmentInfo.id=",attachmentInfo.id)
-              const attachmentUrl = `${featureLayer.url}/${featureLayer.layerId}/${objectId}/attachments/${objectId}`;
-              
+            const startTimestamp = normalizeToDayTimestamp(feature.attributes.start_date);
+
+            const featurePromise = FEATURE_FLAGS.showEventImages
+              ? featureLayer.queryAttachments({ objectIds: [objectId] }).then(attachments => attachments[objectId]?.[0] ?? null)
+              : Promise.resolve(null);
+
+            promises.push(featurePromise.then(attachmentInfo => {
+              const attachmentUrl = attachmentInfo
+                ? `${featureLayer.url}/${featureLayer.layerId}/${objectId}/attachments/${attachmentInfo.id}`
+                : null;
+
               feature.attributes.attachmentUrl = attachmentUrl;
-              
-              // Create CIM symbol using the image URL
-              const cimSymbol = new CIMSymbol({
-                data: {
-                  type: "CIMSymbolReference",
-                  symbol: {
-                    type: "CIMPointSymbol",
-                    symbolLayers: [
-                    {
-                      type: "CIMPictureMarker",
-                      enable: true,
-                      scaleX: 1,
-                      scaleY: 1,
-                      size: 25,
-                      // url: attachmentUrl,
-                      url:"images/devconf-icon.png",
-                      imageFormat: "PNG"
-                    },
-                    {
-                      type: "CIMVectorMarker",
-                      enable: true,
-                      size: 40,
-                      frame: { xmin: 0, ymin: 0, xmax: 40, ymax: 40 },
-                      markerGraphics: [{
-                        geometry: {
-                          rings: circleRing
-                        },
-                        symbol: {
-                          type: "CIMPolygonSymbol",
-                          symbolLayers: [{
-                            type: "CIMSolidFill",
-                            enable: true,
-                            color: [255, 255, 255, 255] // White background
-                          }]
-                        }
-                      }]
-                    }]
-                  }
-                }
+
+              return getRoundedMarkerIconUrl(attachmentUrl || DEFAULT_MARKER_ICON).then(markerIconUrl => {
+                const graphic = new Graphic({
+                  geometry: feature.geometry,
+                  symbol: createMarkerSymbol(markerIconUrl, true, circleRing),
+                  attributes: feature.attributes
+                });
+                graphicsLayer.add(graphic);
+                
+                const label = new Graphic({
+                  geometry: feature.geometry,
+                  symbol: createLabelSymbol(feature.attributes.event_name, true)
+                });
+                graphicsLayer.add(label);
+                
+                let template = document.createElement("calcite-card")
+                template.setAttribute("thumbnail-position", "inline-start");
+                template.setAttribute("start-date",feature.attributes.start_date);
+                template.setAttribute("latitude",feature.geometry.latitude);
+                template.setAttribute("longitude",feature.geometry.longitude);
+                template.setAttribute("data-start-timestamp", startTimestamp ?? "");
+                const thumbnailMarkup = FEATURE_FLAGS.showEventImages && attachmentUrl
+                  ? `<img slot="thumbnail" src="${attachmentUrl}" alt="${feature.attributes.event_name} logo">`
+                  : "";
+                template.innerHTML = `
+                    ${thumbnailMarkup}
+                    <span slot="heading"><a href="${feature.attributes.event_url}">${feature.attributes.event_name}</a></span>
+                    <span slot="description">
+                      <span class="card-date">
+                        <calcite-icon icon="calendar" scale="s"></calcite-icon>
+                        ${formatDateLabel(startTimestamp)}
+                      </span>
+                      </span>
+                `;
+                cardsEl.appendChild(template);
+
+                eventEntries.push({
+                  startTimestamp,
+                  markerIconUrl,
+                  eventName: feature.attributes.event_name,
+                  graphic,
+                  label,
+                  card: template,
+                  isActive: true,
+                  isHidden: false
+                });
               });
-              
-              const graphic = new Graphic({
-                geometry: feature.geometry,
-                symbol: cimSymbol,
-                attributes: feature.attributes,
-                popupTemplate: {
-                  title: "{event_name}",
-                  content:[{
-                    type:"text",
-                    text: "Start date: {start_date} <br/> URL: <a href=\"{event_url}\">{event_url}</a>"
-                  }
-                  // ,{
-                  //   type: "media",
-                  //   mediaInfos: [
-                  //   {
-                  //     type:"image",
-                  //     value: {
-                  //       sourceURL: feature.attributes.attachmentUrl
-                  //     }
-                  //   }
-                  //] 
-                  //}
-                  ]
-                }
-              });
-              graphicsLayer.add(graphic);
-              
-              const label = new Graphic({
-                geometry: feature.geometry,
-                symbol: {
-                  type: "text",
-                  text: feature.attributes.event_name,
-                  color: "white",
-                  haloColor: "black",
-                  haloSize: "1px",
-                  font: {
-                    size: 10,
-                    family: "Arial",
-                    weight: "bold"
-                  },
-                  yoffset: 20 // push label above marker
-                }
-              });
-              graphicsLayer.add(label);
-              
-              let template = document.createElement("calcite-card")
-              template.setAttribute("thumbnail-position", "inline-start");
-              template.setAttribute("start-date",feature.attributes.start_date);
-              template.setAttribute("latitude",feature.geometry.latitude);
-              template.setAttribute("longitude",feature.geometry.longitude);
-              // <img slot="thumbnail" src="${ feature.attributes.attachmentUrl}" alt="${feature.attributes.event_name} logo">
-              template.innerHTML = `
-                  
-                  <span slot="heading"><a href="${feature.attributes.event_url}">${feature.attributes.event_name}</a></span>
-                  <span slot="description">
-                    
-                    Start date: ${feature.attributes.start_date}
-                    </span>
-              `;
-              cardsEl.appendChild(template);              
             }));
             
           }// end for
 
           Promise.all(promises).then(() => {
+            const datedEntries = eventEntries.filter(entry => entry.startTimestamp !== null);
 
-            cardsEl.addEventListener("calciteCardGroupSelect", (el, i) => {
-              const target = el.target.selectedItems[0];
+            function updateEntryState(entry, isActive, isHidden) {
+              if (entry.isActive === isActive && entry.isHidden === isHidden) {
+                return;
+              }
+
+              entry.graphic.visible = !isHidden;
+              entry.graphic.symbol = createMarkerSymbol(entry.markerIconUrl, isActive, circleRing);
+              entry.label.symbol = createLabelSymbol(entry.eventName, isActive);
+              entry.card.classList.toggle("is-out-of-range", !isActive);
+              entry.card.classList.toggle("is-hidden", isHidden);
+              entry.isActive = isActive;
+              entry.isHidden = isHidden;
+            }
+
+            function applyFilters(minTimestamp, maxTimestamp) {
+              const hideEsriEvents = hideEsriToggle.checked;
+
+              for (const entry of eventEntries) {
+                const isActive = entry.startTimestamp === null
+                  ? true
+                  : entry.startTimestamp >= minTimestamp && entry.startTimestamp <= maxTimestamp;
+                const isHidden = hideEsriEvents && /esri/i.test(entry.eventName);
+
+                updateEntryState(entry, isActive, isHidden);
+              }
+
+              requestLabelVisibilityUpdate(eventEntries);
+            }
+
+            function getSelectedRange() {
+              const minValue = Number(timeSlider.minValue);
+              const maxValue = Number(timeSlider.maxValue);
+
+              return {
+                minTimestamp: Number.isFinite(minValue) ? minValue : -Infinity,
+                maxTimestamp: Number.isFinite(maxValue) ? maxValue : Infinity
+              };
+            }
+
+            cardsEl.addEventListener("click", event => {
+              if (event.target.closest("a")) {
+                return;
+              }
+
+              const target = event.target.closest("calcite-card");
+
+              if (!target || !cardsEl.contains(target)) {
+                return;
+              }
+
               const lat = target.getAttribute("latitude")
               const lon = target.getAttribute("longitude")
               view.goTo({
                 center: [Number(lon), Number(lat)],
                 zoom: 5
               });
-            })
+            });
             
             const group = document.getElementById("cards");
             
-            const cards = Array.from(group.querySelectorAll("calcite-card"));
-            
-            const sorted = cards.sort((a, b) => {
-              const dateA = new Date(a.getAttribute("start-date"));
-              const dateB = new Date(b.getAttribute("start-date"));
-              return dateB - dateA; // descending
+            const sorted = [...eventEntries].sort((a, b) => {
+              return (b.startTimestamp ?? -Infinity) - (a.startTimestamp ?? -Infinity);
             });
 
-            // Clear the group and re-append sorted cards
-            sorted.forEach(card => group.appendChild(card));
+            sorted.forEach(entry => group.appendChild(entry.card));
+            requestLabelVisibilityUpdate(eventEntries);
+
+            view.watch("stationary", stationary => {
+              if (stationary) {
+                requestLabelVisibilityUpdate(eventEntries);
+              }
+            });
+
+            if (datedEntries.length > 0) {
+              const allTimestamps = datedEntries.map(entry => entry.startTimestamp);
+              const minTimestamp = Math.min(...allTimestamps);
+              const maxTimestamp = Math.max(...allTimestamps);
+              const initialMinTimestamp = Math.min(Math.max(getStartOfToday(), minTimestamp), maxTimestamp);
+
+              Promise.resolve(timeSlider.componentOnReady ? timeSlider.componentOnReady() : undefined).then(() => {
+                timeSlider.min = minTimestamp;
+                timeSlider.max = maxTimestamp;
+                timeSlider.minValue = initialMinTimestamp;
+                timeSlider.maxValue = maxTimestamp;
+                timeSlider.step = DAY_IN_MS;
+                timeSlider.labelFormatter = value => formatDateLabel(value);
+
+                applyFilters(initialMinTimestamp, maxTimestamp);
+
+                timeSlider.addEventListener("calciteSliderInput", () => {
+                  const { minTimestamp, maxTimestamp } = getSelectedRange();
+                  applyFilters(minTimestamp, maxTimestamp);
+                });
+              });
+            } else {
+              timeSlider.disabled = true;
+              applyFilters(-Infinity, Infinity);
+            }
+
+            hideEsriToggle.addEventListener("calciteSwitchChange", () => {
+              const { minTimestamp, maxTimestamp } = getSelectedRange();
+              applyFilters(minTimestamp, maxTimestamp);
+            });
           });
         });
       });
       
     });
   </script>
-</body>
 </body>
 </html>
